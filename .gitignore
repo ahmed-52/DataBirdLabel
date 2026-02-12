@@ -1,0 +1,13 @@
+/backend/data
+
+/frontend/dist
+/frontend/node_modules
+/frontend/build
+
+static
+ 
+/backend/venv
+
+/data
+
+__pycache__
