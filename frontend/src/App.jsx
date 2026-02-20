@@ -95,6 +95,42 @@ function normalizePixelRect(pixelRect, containerW, containerH) {
   }
 }
 
+function stemFromFilePath(path) {
+  const normalized = String(path || "").replace(/\\/g, "/")
+  const base = normalized.split("/").pop() || ""
+  const dot = base.lastIndexOf(".")
+  return dot > 0 ? base.slice(0, dot) : base
+}
+
+function parseYoloAnnotations(text, classNames, stem) {
+  const lines = String(text || "").split(/\r?\n/)
+  const anns = []
+  lines.forEach((line, idx) => {
+    const raw = line.trim()
+    if (!raw) return
+    const parts = raw.split(/\s+/)
+    if (parts.length < 5) return
+    const classId = Number(parts[0])
+    const xCenter = Number(parts[1])
+    const yCenter = Number(parts[2])
+    const width = Number(parts[3])
+    const height = Number(parts[4])
+    if (![classId, xCenter, yCenter, width, height].every(Number.isFinite)) return
+    if (width <= 0 || height <= 0) return
+
+    anns.push({
+      id: `${stem}-${idx + 1}`,
+      class_id: classId,
+      class_name: classNames[classId] || `class_${classId}`,
+      x_center: clamp(xCenter, 0, 1),
+      y_center: clamp(yCenter, 0, 1),
+      width: clamp(width, 0, 1),
+      height: clamp(height, 0, 1),
+    })
+  })
+  return anns
+}
+
 export default function App() {
   const [tab, setTab] = useState("classes")
   const [classes, setClasses] = useState([])
@@ -119,8 +155,14 @@ export default function App() {
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [zoom, setZoom] = useState(1.3)
+  const [viewerClasses, setViewerClasses] = useState([])
+  const [viewerTiles, setViewerTiles] = useState([])
+  const [viewerSelectedTileIndex, setViewerSelectedTileIndex] = useState(0)
+  const [viewerZoom, setViewerZoom] = useState(1.3)
 
   const stageRef = useRef(null)
+  const viewerStageRef = useRef(null)
 
   const selectedProject = useMemo(
     () => projects.find((p) => p.id === selectedProjectId) || null,
@@ -128,6 +170,12 @@ export default function App() {
   )
 
   const selectedTile = projectTiles[selectedTileIndex] || null
+  const stageWidth = Math.round(1200 * zoom)
+  const stageHeight = Math.round(1100 * zoom)
+  const selectedAnnotation = tileAnnotations.find((ann) => ann.id === selectedAnnotationId) || null
+  const viewerSelectedTile = viewerTiles[viewerSelectedTileIndex] || null
+  const viewerStageWidth = Math.round(1200 * viewerZoom)
+  const viewerStageHeight = Math.round(1100 * viewerZoom)
 
   const displayedAnnotations = useMemo(() => {
     return tileAnnotations.map((ann) => {
@@ -224,20 +272,61 @@ export default function App() {
   }, [projectTiles.length, selectedTileIndex])
 
   useEffect(() => {
+    if (viewerSelectedTileIndex > Math.max(0, viewerTiles.length - 1)) {
+      setViewerSelectedTileIndex(Math.max(0, viewerTiles.length - 1))
+    }
+  }, [viewerTiles.length, viewerSelectedTileIndex])
+
+  useEffect(() => {
+    return () => {
+      viewerTiles.forEach((t) => {
+        if (t.imageUrl) URL.revokeObjectURL(t.imageUrl)
+      })
+    }
+  }, [viewerTiles])
+
+  useEffect(() => {
+    function zoomIn() {
+      setZoom((z) => clamp(z + 0.2, 0.6, 4))
+    }
+
+    function zoomOut() {
+      setZoom((z) => clamp(z - 0.2, 0.6, 4))
+    }
+
     function onKey(e) {
       const targetTag = (e.target?.tagName || "").toLowerCase()
       if (targetTag === "input" || targetTag === "textarea" || targetTag === "select") {
         return
       }
 
-      if (e.key.toLowerCase() === "d") {
+      if (tab === "labeler" && (e.key === "+" || e.key === "=")) {
+        e.preventDefault()
+        zoomIn()
+      }
+      if (tab === "labeler" && (e.key === "-" || e.key === "_")) {
+        e.preventDefault()
+        zoomOut()
+      }
+      if (tab === "labeler" && e.key === "0") {
+        e.preventDefault()
+        setZoom(1.3)
+      }
+
+      if (tab === "labeler" && e.key.toLowerCase() === "d") {
         setDrawMode((d) => !d)
       }
-      if (e.key === "ArrowRight") {
+      if (tab === "labeler" && e.key === "ArrowRight") {
         setSelectedTileIndex((i) => Math.min(i + 1, Math.max(0, projectTiles.length - 1)))
       }
-      if (e.key === "ArrowLeft") {
+      if (tab === "labeler" && e.key === "ArrowLeft") {
         setSelectedTileIndex((i) => Math.max(i - 1, 0))
+      }
+      if (tab === "viewer" && e.key === "ArrowRight") {
+        setViewerSelectedTileIndex((i) => Math.min(i + 1, Math.max(0, viewerTiles.length - 1)))
+      }
+      if (tab === "viewer" && e.key === "ArrowLeft") {
+        setViewerSelectedTileIndex((i) => Math.max(i - 1, 0))
       }
       if (!drawMode && selectedAnnotationId && (e.key === "Delete" || e.key === "Backspace")) {
         e.preventDefault()
@@ -247,7 +336,7 @@ export default function App() {
 
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [projectTiles.length, drawMode, selectedAnnotationId])
+  }, [projectTiles.length, drawMode, selectedAnnotationId, tab, viewerTiles.length])
 
   async function createClass() {
     if (!newClass.trim()) return
@@ -348,6 +437,83 @@ export default function App() {
     }
   }
 
+  async function importYoloFiles(filesLike) {
+    const files = Array.from(filesLike || [])
+    if (files.length === 0) return
+    setLoading(true)
+    setError("")
+    try {
+      const imageByStem = new Map()
+      const labelByStem = new Map()
+      const imageExt = new Set(["jpg", "jpeg", "png", "webp", "bmp"])
+      let classesFile = null
+
+      for (const file of files) {
+        const rel = (file.webkitRelativePath || file.name || "").replace(/\\/g, "/")
+        const base = rel.split("/").pop() || ""
+        const stem = stemFromFilePath(rel)
+        const ext = base.includes(".") ? base.split(".").pop().toLowerCase() : ""
+
+        if (base.toLowerCase() === "classes.txt") {
+          classesFile = file
+          continue
+        }
+        if (imageExt.has(ext)) {
+          if (!imageByStem.has(stem)) imageByStem.set(stem, file)
+          continue
+        }
+        if (ext === "txt") {
+          if (!labelByStem.has(stem)) labelByStem.set(stem, file)
+        }
+      }
+
+      if (!classesFile) {
+        throw new Error("Missing classes.txt in selected files")
+      }
+      if (imageByStem.size === 0) {
+        throw new Error("No tile images found (.jpg/.png/...)")
+      }
+
+      const classNames = (await classesFile.text())
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+      if (classNames.length === 0) {
+        throw new Error("classes.txt is empty")
+      }
+
+      const nextTiles = []
+      const stems = Array.from(imageByStem.keys()).sort((a, b) => a.localeCompare(b))
+      for (let i = 0; i < stems.length; i += 1) {
+        const stem = stems[i]
+        const imgFile = imageByStem.get(stem)
+        const labelFile = labelByStem.get(stem)
+        const annText = labelFile ? await labelFile.text() : ""
+        const anns = parseYoloAnnotations(annText, classNames, stem)
+        nextTiles.push({
+          id: i + 1,
+          stem,
+          file_name: imgFile.name,
+          imageUrl: URL.createObjectURL(imgFile),
+          annotations: anns,
+        })
+      }
+
+      viewerTiles.forEach((t) => {
+        if (t.imageUrl) URL.revokeObjectURL(t.imageUrl)
+      })
+      setViewerClasses(classNames)
+      setViewerTiles(nextTiles)
+      setViewerSelectedTileIndex(0)
+      setViewerZoom(1.3)
+      setTab("viewer")
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function submitRect(rect) {
     if (!selectedTile || !selectedClassId || !stageRef.current) return
     const box = stageRef.current.getBoundingClientRect()
@@ -412,6 +578,11 @@ export default function App() {
     } finally {
       setLoading(false)
     }
+  }
+
+  async function applyClassToSelectedAnnotation() {
+    if (!selectedAnnotationId || !selectedClassId) return
+    await updateAnnotation(selectedAnnotationId, { class_id: selectedClassId })
   }
 
   function onStageDown(e) {
@@ -530,7 +701,7 @@ export default function App() {
             <div className="flex items-center gap-2">
               <img src="/databird.png" alt="DataBLaber" className="h-8 w-8 object-contain" />
               <div>
-                <h1 className="text-sm font-bold tracking-wide font-display">DataBLaber</h1>
+                <h1 className="text-sm font-bold tracking-wide font-display">DataBirdLaber</h1>
                 <p className="text-[10px] uppercase tracking-wider text-zinc-500 font-mono">Bird Label Tool</p>
               </div>
             </div>
@@ -567,6 +738,14 @@ export default function App() {
             >
               Labeling
             </button>
+            <button
+              className={`w-full text-left px-3 py-2 rounded-sm border text-xs font-mono uppercase tracking-wide ${
+                tab === "viewer" ? "border-zinc-300 bg-zinc-50" : "border-transparent"
+              }`}
+              onClick={() => setTab("viewer")}
+            >
+              YOLO Viewer
+            </button>
 
             {tab === "labeler" && (
               <div className="border rounded bg-zinc-50 p-3 space-y-3">
@@ -589,6 +768,13 @@ export default function App() {
                     </option>
                   ))}
                 </select>
+                <button
+                  className="w-full px-3 py-2 rounded border bg-white disabled:opacity-50"
+                  disabled={!selectedAnnotation || !selectedClassId || selectedAnnotation.class_id === selectedClassId}
+                  onClick={applyClassToSelectedAnnotation}
+                >
+                  Apply class to selected box
+                </button>
 
                 <button
                   className={`w-full px-3 py-2 rounded border ${drawMode ? "bg-zinc-900 text-white" : "bg-white"}`}
@@ -598,6 +784,19 @@ export default function App() {
                 </button>
 
                 <div className="text-xs text-zinc-600">Press D for one annotation, draw, it auto exits draw mode.</div>
+                <div className="text-xs text-zinc-600">Zoom: + in, - out, 0 reset</div>
+
+                <div className="flex gap-2">
+                  <button className="flex-1 border rounded px-2 py-1" onClick={() => setZoom((z) => clamp(z - 0.2, 0.6, 4))}>
+                    Zoom -
+                  </button>
+                  <button className="flex-1 border rounded px-2 py-1" onClick={() => setZoom(1.3)}>
+                    {Math.round(zoom * 100)}%
+                  </button>
+                  <button className="flex-1 border rounded px-2 py-1" onClick={() => setZoom((z) => clamp(z + 0.2, 0.6, 4))}>
+                    Zoom +
+                  </button>
+                </div>
 
                 <div className="flex gap-2">
                   <button className="flex-1 border rounded px-2 py-1" onClick={() => setSelectedTileIndex((i) => Math.max(i - 1, 0))}>
@@ -759,18 +958,18 @@ export default function App() {
           <section className="h-[calc(100vh-3rem)] space-y-3 flex flex-col">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-semibold">Labeling</h2>
-              <div className="text-sm text-zinc-600">D: one-shot draw | ← →: previous/next tile</div>
+              <div className="text-sm text-zinc-600">D: one-shot draw | + / -: zoom | 0: reset | ← →: previous/next tile</div>
             </div>
 
             {!selectedProject && <p>Select a project first.</p>}
             {selectedProject && projectTiles.length === 0 && <p>No tiles in this project yet.</p>}
 
             {selectedProject && projectTiles.length > 0 && selectedTile && (
-              <div className="flex-1 border rounded bg-zinc-900 p-2 flex items-center justify-center">
+              <div className="flex-1 border rounded bg-zinc-900 p-2 flex items-center justify-center overflow-auto">
                 <div
                   ref={stageRef}
                   className={`relative select-none ${drawMode ? "cursor-crosshair" : "cursor-default"}`}
-                  style={{ width: "min(96vw, 1500px)", height: "min(88vh, 1500px)" }}
+                  style={{ width: `${stageWidth}px`, height: `${stageHeight}px` }}
                   onMouseDown={onStageDown}
                   onMouseMove={onStageMove}
                   onMouseUp={onStageUp}
@@ -854,6 +1053,91 @@ export default function App() {
                         strokeWidth="2"
                       />
                     )}
+                  </svg>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+
+        {tab === "viewer" && (
+          <section className="h-[calc(100vh-3rem)] space-y-3 flex flex-col">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-semibold">YOLO Viewer (Read-Only)</h2>
+              <div className="text-sm text-zinc-600">Attach images + labels/*.txt + classes.txt | ← → navigate</div>
+            </div>
+
+            <div className="border rounded bg-white p-3 flex flex-wrap items-center gap-3">
+              <input
+                type="file"
+                multiple
+                onChange={(e) => importYoloFiles(e.target.files)}
+                className="text-sm"
+              />
+              <button className="px-3 py-1 border rounded" onClick={() => setViewerZoom((z) => clamp(z - 0.2, 0.6, 4))}>
+                Zoom -
+              </button>
+              <button className="px-3 py-1 border rounded" onClick={() => setViewerZoom(1.3)}>
+                {Math.round(viewerZoom * 100)}%
+              </button>
+              <button className="px-3 py-1 border rounded" onClick={() => setViewerZoom((z) => clamp(z + 0.2, 0.6, 4))}>
+                Zoom +
+              </button>
+              <button
+                className="px-3 py-1 border rounded"
+                onClick={() => setViewerSelectedTileIndex((i) => Math.max(i - 1, 0))}
+                disabled={viewerTiles.length === 0}
+              >
+                Prev
+              </button>
+              <button
+                className="px-3 py-1 border rounded"
+                onClick={() => setViewerSelectedTileIndex((i) => Math.min(i + 1, Math.max(0, viewerTiles.length - 1)))}
+                disabled={viewerTiles.length === 0}
+              >
+                Next
+              </button>
+              <span className="text-sm text-zinc-600">
+                Tile {viewerTiles.length ? viewerSelectedTileIndex + 1 : 0}/{viewerTiles.length}
+                {viewerSelectedTile ? ` | Boxes: ${viewerSelectedTile.annotations.length}` : ""}
+              </span>
+            </div>
+
+            <div className="text-sm text-zinc-600">
+              Classes loaded: {viewerClasses.length}
+              {viewerClasses.length ? ` (${viewerClasses.join(", ")})` : ""}
+            </div>
+
+            {!viewerSelectedTile && <p className="text-zinc-600">Attach a YOLO export bundle to begin viewing.</p>}
+
+            {viewerSelectedTile && (
+              <div className="flex-1 border rounded bg-zinc-900 p-2 flex items-center justify-center overflow-auto">
+                <div
+                  ref={viewerStageRef}
+                  className="relative select-none"
+                  style={{ width: `${viewerStageWidth}px`, height: `${viewerStageHeight}px` }}
+                >
+                  <img
+                    src={viewerSelectedTile.imageUrl}
+                    alt={viewerSelectedTile.file_name}
+                    className="absolute inset-0 h-full w-full object-contain"
+                    draggable={false}
+                  />
+                  <svg className="absolute inset-0 h-full w-full">
+                    {viewerStageRef.current &&
+                      viewerSelectedTile.annotations.map((ann) => {
+                        const box = viewerStageRef.current.getBoundingClientRect()
+                        const r = fromNormRect(ann, box.width, box.height)
+                        const color = colorForClassId(ann.class_id)
+                        return (
+                          <g key={ann.id}>
+                            <rect x={r.x} y={r.y} width={r.w} height={r.h} fill={hexToRgba(color, 0.18)} stroke={color} strokeWidth="2" />
+                            <text x={r.x + 6} y={Math.max(14, r.y + 14)} fill={color} fontSize="12">
+                              {ann.class_name}
+                            </text>
+                          </g>
+                        )
+                      })}
                   </svg>
                 </div>
               </div>

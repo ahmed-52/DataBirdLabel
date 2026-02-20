@@ -594,8 +594,18 @@ def export_project(project_id: int):
     project = ensure_project(project_id)
 
     with db() as conn:
-        classes = conn.execute("SELECT id, name FROM label_classes ORDER BY id ASC").fetchall()
         tiles = conn.execute("SELECT * FROM tiles WHERE project_id = ? ORDER BY id ASC", (project_id,)).fetchall()
+        classes = conn.execute(
+            """
+            SELECT DISTINCT c.id, c.name
+            FROM label_classes c
+            JOIN annotations a ON a.class_id = c.id
+            JOIN tiles t ON t.id = a.tile_id
+            WHERE t.project_id = ?
+            ORDER BY c.id ASC
+            """,
+            (project_id,),
+        ).fetchall()
 
         class_index_map = {row["id"]: idx for idx, row in enumerate(classes)}
         class_names = [row["name"] for row in classes]
