@@ -11,3 +11,17 @@ static
 /data
 
 __pycache__
+
+_archived
+
+# Firebase
+.firebaserc
+.firebase/
+*.key.json
+service-account*.json
+.env
+.env.*
+
+# Local output / junk
+/exports
+.DS_Store

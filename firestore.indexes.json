@@ -1,0 +1,28 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "tiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "project_id", "order": "ASCENDING" },
+        { "fieldPath": "id", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "annotations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "tile_id", "order": "ASCENDING" },
+        { "fieldPath": "id", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "last_heartbeat", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

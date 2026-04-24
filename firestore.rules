@@ -1,0 +1,46 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Anyone can read everything (keyword gate is client-side)
+    // Anyone can write annotations and sessions
+    // Only admin CLI can write classes, projects, tiles, orthomosaics, counters
+
+    match /classes/{doc} {
+      allow read: if true;
+      allow write: if false; // admin CLI only (uses service account)
+    }
+
+    match /users/{doc} {
+      allow read: if true;
+      allow write: if false; // admin CLI only
+    }
+
+    match /projects/{doc} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /tiles/{doc} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /orthomosaics/{doc} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /annotations/{doc} {
+      allow read, write: if true;
+    }
+
+    match /sessions/{doc} {
+      allow read, write: if true;
+    }
+
+    match /_counters/{doc} {
+      allow read, write: if true;
+    }
+  }
+}

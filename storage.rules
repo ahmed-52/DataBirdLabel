@@ -1,0 +1,11 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Tile images are publicly readable (no auth needed)
+    match /tiles/{allPaths=**} {
+      allow read: if true;
+      allow write: if false;  // admin CLI uses service account
+    }
+  }
+}
