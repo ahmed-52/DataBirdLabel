@@ -311,6 +311,7 @@ function LabelPage({ classes, labeler, setError }) {
   const [postingComment, setPostingComment] = useState(false)
   const [classId, setClassId] = useState(classes[0]?.id || null)
   const [selAnn, setSelAnn] = useState(null)
+  const [hoverId, setHoverId] = useState(null)
   const [draw, setDraw] = useState(false)
   const [drag, setDrag] = useState(null)
   const [interaction, setInteraction] = useState(null)
@@ -644,13 +645,22 @@ function LabelPage({ classes, labeler, setError }) {
     const p = pt(e); if (!p) return
     if (draw && drag) { setDrag(prev => prev ? { ...prev, x2: p.x, y2: p.y } : prev); return }
     if (!interaction) {
-      if (selAnn && ref.current) {
-        const selData = displayed.find(a => a.id === selAnn)
-        if (selData) {
-          const r = fromNorm(selData, p.w, p.h)
-          const handle = hitHandle(p, r)
-          ref.current.style.cursor = handle ? handle.cursor : (draw ? "crosshair" : "default")
+      // Hover-tracking: drives the "show full class name only on hover" label behavior.
+      // hitTest is O(N) but N is small (per-tile annotation counts) so this is fine.
+      const hit = hitTest(p.x, p.y, p.w, p.h)
+      const newHover = hit?.ann.id ?? null
+      if (newHover !== hoverId) setHoverId(newHover)
+      if (ref.current) {
+        let cursor = draw ? "crosshair" : (hit ? "pointer" : "default")
+        if (selAnn) {
+          const selData = displayed.find(a => a.id === selAnn)
+          if (selData) {
+            const r = fromNorm(selData, p.w, p.h)
+            const handle = hitHandle(p, r)
+            if (handle) cursor = handle.cursor
+          }
         }
+        ref.current.style.cursor = cursor
       }
       return
     }
@@ -864,7 +874,8 @@ function LabelPage({ classes, labeler, setError }) {
               // tile-aspect size; parent's overflow-auto handles scrolling if it doesn't fit.
               className={`relative select-none shrink-0 ${draw ? "cursor-crosshair" : "cursor-default"}`}
               style={{ width: `${sw}px`, height: `${sh}px` }}
-              onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}>
+              onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp}
+              onMouseLeave={() => { onUp(); setHoverId(null) }}>
               <img src={tile.storage_url} alt={tile.file_name}
                 className="absolute inset-0 h-full w-full object-contain" draggable={false} />
               <svg className="absolute inset-0 h-full w-full" viewBox={`0 0 ${tileW} ${tileH}`} preserveAspectRatio="none" style={{ pointerEvents: "none" }}>
@@ -872,13 +883,18 @@ function LabelPage({ classes, labeler, setError }) {
                   const r = fromNorm(a, tileW, tileH)
                   const c = colorFor(a.class_id)
                   const sel = selAnn === a.id
+                  const hovered = hoverId === a.id
+                  const active = interaction && interaction.id === a.id
                   const HS = 5
                   // When a secondary (unsure) class is set, show both in the label: "primary / ?secondary"
                   // #N matches the sidebar/comments numbering so commenters can reference boxes.
                   const baseText = a.secondary_class_id
                     ? `${a.class_name} / ?${a.secondary_class_name || `class_${a.secondary_class_id}`}`
                     : a.class_name
-                  const labelText = `#${idx + 1} ${baseText}`
+                  // Default: show only #N to keep the canvas uncluttered. Show the full
+                  // species name only when the box is hovered, selected, or being dragged.
+                  const showFullLabel = sel || hovered || active
+                  const labelText = showFullLabel ? `#${idx + 1} ${baseText}` : `#${idx + 1}`
                   const tagY = r.y > 20 ? r.y - 20 : r.y + 2
                   return (
                     <g key={a.id}>
