@@ -25,3 +25,4 @@ service-account*.json
 # Local output / junk
 /exports
 .DS_Store
+.gstack/
