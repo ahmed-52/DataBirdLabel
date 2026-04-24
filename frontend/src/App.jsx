@@ -72,9 +72,9 @@ async function nextId(counterName) {
 
 function getSessionId() { return sessionStorage.getItem("dbl_session") }
 function setSessionStorage(id) { sessionStorage.setItem("dbl_session", id) }
-function clearSession() { sessionStorage.removeItem("dbl_session"); sessionStorage.removeItem("dbl_labeler") }
-function getLabeler() { return sessionStorage.getItem("dbl_labeler") || "" }
-function setLabeler(name) { sessionStorage.setItem("dbl_labeler", name) }
+function clearSession() { sessionStorage.removeItem("dbl_session") } // labeler persists across sessions
+function getLabeler() { return localStorage.getItem("dbl_labeler") || "" }
+function setLabeler(name) { localStorage.setItem("dbl_labeler", name) }
 
 async function validateSession(sid) {
   const snap = await getDoc(doc(db, "sessions", "_lock"))
@@ -140,27 +140,20 @@ async function releaseSession(sid) {
 
 function GatePage({ onSuccess }) {
   const [keyword, setKeyword] = useState("")
-  const [labeler, setLabelerLocal] = useState("")
-  const [users, setUsers] = useState([])
-  const [usersLoaded, setUsersLoaded] = useState(false)
+  const [labeler, setLabelerLocal] = useState(() => getLabeler())
   const [error, setError] = useState("")
   const [checking, setChecking] = useState(false)
 
-  useEffect(() => {
-    fsGetAll("users", orderBy("name"))
-      .then(u => { setUsers(u); setUsersLoaded(true) })
-      .catch(e => { setError("Could not load users: " + e.message); setUsersLoaded(true) })
-  }, [])
-
   async function submit() {
-    if (!keyword.trim()) return
-    if (!labeler.trim()) { setError("Pick your name."); return }
+    const name = labeler.trim()
+    if (!name) { setError("Enter your name."); return }
+    if (!keyword.trim()) { setError("Enter the keyword."); return }
     setChecking(true); setError("")
     try {
       if (keyword.trim() !== GATE_KEYWORD) throw new Error("Wrong keyword.")
       const sid = await claimSession()
       setSessionStorage(sid)
-      setLabeler(labeler.trim())
+      setLabeler(name)
       onSuccess(sid)
     } catch (e) { setError(e.message) }
     finally { setChecking(false) }
@@ -172,19 +165,19 @@ function GatePage({ onSuccess }) {
         <div className="text-center mb-8">
           <img src="/databird.png" alt="" className="h-12 w-12 object-contain mx-auto mb-4 opacity-80" />
           <h1 className="text-xl font-bold text-white tracking-tight font-display">DataBirdLabel</h1>
-          <p className="text-sm text-zinc-500 mt-1">Enter the keyword to start labeling</p>
+          <p className="text-sm text-zinc-500 mt-1">Enter your name and the keyword to start labeling</p>
         </div>
         <div className="space-y-3">
-          <select value={labeler} onChange={e => setLabelerLocal(e.target.value)}
-            disabled={!usersLoaded}
-            className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-teal-600/50 focus:border-teal-600">
-            <option value="">{usersLoaded ? (users.length ? "Pick your name..." : "No users yet — ask admin") : "Loading..."}</option>
-            {users.map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
-          </select>
-          <input type="password" value={keyword} onChange={e => setKeyword(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && submit()} placeholder="Keyword" autoFocus
+          <input type="text" value={labeler} onChange={e => setLabelerLocal(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && submit()}
+            onFocus={e => e.target.select()}
+            placeholder="Your name" autoFocus
+            maxLength={80}
             className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-teal-600/50 focus:border-teal-600 placeholder:text-zinc-600" />
-          <button onClick={submit} disabled={checking || !usersLoaded || users.length === 0}
+          <input type="password" value={keyword} onChange={e => setKeyword(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && submit()} placeholder="Keyword"
+            className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-teal-600/50 focus:border-teal-600 placeholder:text-zinc-600" />
+          <button onClick={submit} disabled={checking}
             className="w-full py-3 rounded-lg bg-teal-700 text-white text-sm font-medium hover:bg-teal-600 transition-colors disabled:opacity-50">
             {checking ? "Checking..." : "Enter"}
           </button>

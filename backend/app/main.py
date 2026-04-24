@@ -4,8 +4,6 @@ Local-only CLI for managing DataBirdLabel on Firebase.
 Usage:
     python -m app.main add-class <class_name>
     python -m app.main list-classes
-    python -m app.main add-user "<full name>"
-    python -m app.main list-users
     python -m app.main list-projects
     python -m app.main ingest <project_name> <geotiff_path>
     python -m app.main export <project_name> <output_dir>
@@ -90,40 +88,6 @@ def cmd_list_classes():
     docs = db.collection("classes").order_by("id").get()
     if not docs:
         print("No classes defined.")
-        return
-    for d in docs:
-        print(f"  [{d.get('id')}] {d.get('name')}")
-
-
-def cmd_add_user(name: str):
-    name = name.strip()
-    if not name:
-        print("Error: user name cannot be empty")
-        sys.exit(1)
-    if len(name) > 80:
-        print("Error: user name too long (max 80 chars)")
-        sys.exit(1)
-
-    db = get_db()
-    existing = db.collection("users").where("name", "==", name).limit(1).get()
-    if existing:
-        print(f"User '{name}' already exists (id={existing[0].get('id')})")
-        return
-
-    uid = next_id("users")
-    db.collection("users").document(str(uid)).set({
-        "id": uid,
-        "name": name,
-        "created_at": now_iso(),
-    })
-    print(f"Created user '{name}' (id={uid})")
-
-
-def cmd_list_users():
-    db = get_db()
-    docs = db.collection("users").order_by("id").get()
-    if not docs:
-        print("No users defined.")
         return
     for d in docs:
         print(f"  [{d.get('id')}] {d.get('name')}")
@@ -363,10 +327,6 @@ def main():
         cmd_add_class(sys.argv[2])
     elif cmd == "list-classes":
         cmd_list_classes()
-    elif cmd == "add-user" and len(sys.argv) == 3:
-        cmd_add_user(sys.argv[2])
-    elif cmd == "list-users":
-        cmd_list_users()
     elif cmd == "list-projects":
         cmd_list_projects()
     elif cmd == "ingest" and len(sys.argv) == 4:

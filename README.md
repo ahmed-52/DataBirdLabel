@@ -60,16 +60,6 @@ python -m app.main add-class black_headed_ibis
 python -m app.main list-classes
 ```
 
-### Add labelers (users)
-
-The gate screen shows a dropdown of registered labelers; their name is stamped on every annotation they create, edit, or delete.
-
-```bash
-python -m app.main add-user "Chea Monysocheata"
-python -m app.main add-user "Rob Tizard"
-python -m app.main list-users
-```
-
 ### Ingest a GeoTIFF (creates a project + tiles)
 
 ```bash
@@ -109,7 +99,7 @@ firebase deploy --only hosting --project databirdlabel
 ## For labelers
 
 1. Go to https://databirdlabel.web.app
-2. Pick your name from the dropdown and enter the keyword
+2. Type your name and enter the keyword. Your name is remembered in this browser so you only type it once.
 3. Pick a project, click **Label**
 4. Use **D** to draw boxes, **1–4** to switch active class, **+/-** to zoom, arrow keys to navigate tiles
 5. Click a class on the left to set what you're labeling

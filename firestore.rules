@@ -11,11 +11,6 @@ service cloud.firestore {
       allow write: if false; // admin CLI only (uses service account)
     }
 
-    match /users/{doc} {
-      allow read: if true;
-      allow write: if false; // admin CLI only
-    }
-
     match /projects/{doc} {
       allow read: if true;
       allow write: if false;
