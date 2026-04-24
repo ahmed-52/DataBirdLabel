@@ -12,6 +12,12 @@ const COLORS = [
   "#10b981", "#f43f5e",
 ]
 
+// Industry-standard deadzone: ignore pointer movements under this many tile-pixels
+// so clicks (with inevitable trackpad/mouse jitter) don't accidentally nudge boxes.
+// CVAT, Label Studio, and Chromium all use ~4px. Measured in tile-pixel space so it
+// scales sensibly with zoom.
+const DRAG_THRESHOLD_PX = 4
+
 const GATE_KEYWORD = import.meta.env.VITE_GATE_KEYWORD || ""
 const SESSION_TIMEOUT_MS = 2 * 60 * 1000 // 2 minutes
 const HEARTBEAT_MS = 30000
@@ -316,8 +322,11 @@ function LabelPage({ classes, labeler, setError }) {
   const tile = tiles[tileIdx] || null
   const tileW = tile?.width || 1280
   const tileH = tile?.height || 1280
-  const sw = Math.round(tileW * zoom)
-  const sh = Math.round(tileH * zoom)
+  // Keep rendered size fractional (no Math.round) so pt() can compute the mouse-to-tile
+  // scale exactly as 1/zoom. Rounding the container introduced a sub-pixel scaling error
+  // on edge tiles (e.g. 747×513) at some zooms — CSS and SVG both render fractional px fine.
+  const sw = tileW * zoom
+  const sh = tileH * zoom
 
   const displayed = useMemo(() => {
     return anns.map(a => editing && editing.id === a.id ? { ...a, ...editing } : a)
@@ -609,21 +618,26 @@ function LabelPage({ classes, labeler, setError }) {
       .finally(() => { pendingRef.current-- })
   }
 
+  // Tracks whether the current mousedown has crossed the drag threshold.
+  // Using a ref (not state) so onMove can read it synchronously without stale closures.
+  const draggedRef = useRef(false)
+
   function onDown(e) {
     const p = pt(e); if (!p) return
+    draggedRef.current = false
     if (draw) { setDrag({ x1: p.x, y1: p.y, x2: p.x, y2: p.y }); return }
     if (selAnn) {
       const selData = displayed.find(a => a.id === selAnn)
       if (selData) {
         const r = fromNorm(selData, p.w, p.h)
         const handle = hitHandle(p, r)
-        if (handle) { setInteraction({ type: "handle", id: selAnn, handle: handle.name, rect: r }); return }
+        if (handle) { setInteraction({ type: "handle", id: selAnn, handle: handle.name, rect: r, startX: p.x, startY: p.y }); return }
       }
     }
     const hit = hitTest(p.x, p.y, p.w, p.h)
     if (!hit) { setSelAnn(null); return }
     setSelAnn(hit.ann.id); setClassId(hit.ann.class_id)
-    setInteraction({ type: "move", id: hit.ann.id, ox: p.x - hit.rect.x, oy: p.y - hit.rect.y, rect: hit.rect })
+    setInteraction({ type: "move", id: hit.ann.id, ox: p.x - hit.rect.x, oy: p.y - hit.rect.y, rect: hit.rect, startX: p.x, startY: p.y })
   }
 
   function onMove(e) {
@@ -639,6 +653,15 @@ function LabelPage({ classes, labeler, setError }) {
         }
       }
       return
+    }
+    // Drag deadzone: don't start mutating the box until the pointer has actually
+    // moved past threshold from mousedown. Kills the "click nudges the box by a pixel"
+    // drift that accumulates over many selections.
+    if (!draggedRef.current && interaction.startX !== undefined) {
+      const dx = p.x - interaction.startX
+      const dy = p.y - interaction.startY
+      if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return
+      draggedRef.current = true
     }
     if (interaction.type === "move") {
       const { w, h } = interaction.rect
