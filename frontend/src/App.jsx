@@ -368,6 +368,10 @@ function LabelPage({ classes, labeler, setError }) {
 
   // Track which tile has pending writes
   const pendingTileRef = useRef(null)
+  // Highest display_num across ALL rows on the current tile (deleted included).
+  // Used so newly-drawn boxes get the next number, never reusing a deleted box's number.
+  // Comments referencing "#3" stay valid even if a box is deleted later.
+  const maxDisplayNumRef = useRef(0)
 
   async function loadAnns(tid) {
     if (!tid) { setAnns([]); return }
@@ -381,6 +385,22 @@ function LabelPage({ classes, labeler, setError }) {
       rows.sort((a, b) => a.id - b.id)
     }
     if (pendingRef.current > 0 && pendingTileRef.current === tid) return
+
+    // Backfill display_num for any row missing it (legacy/seeded data).
+    // Numbered in id-order so the assignment matches the box's creation sequence.
+    // Includes deleted rows so deleted boxes keep their number — comments that
+    // referenced "#5" stay anchored even if box #5 was later removed.
+    let next = Math.max(0, ...rows.map(a => a.display_num || 0))
+    for (const a of rows) {
+      if (!a.display_num) {
+        next++
+        a.display_num = next
+        // Best-effort persist; if it fails, the next load will retry.
+        updateDoc(doc(db, "annotations", String(a.id)), { display_num: next }).catch(() => {})
+      }
+    }
+    maxDisplayNumRef.current = Math.max(0, ...rows.map(a => a.display_num || 0))
+
     // Soft-deleted annotations stay in Firestore for audit but are hidden from the UI.
     // Legacy rows (pre-audit schema) have no `deleted` field → treated as not deleted.
     rows = rows.filter(a => a.deleted !== true)
@@ -530,9 +550,14 @@ function LabelPage({ classes, labeler, setError }) {
     const tempId = localIdRef.current--
     const className = classMap[classId] || `class_${classId}`
     const nowIso = new Date().toISOString()
+    // Reserve the next per-tile display_num. Persistent across deletes so comments
+    // referencing #N stay anchored even if box #N is later removed.
+    maxDisplayNumRef.current += 1
+    const display_num = maxDisplayNumRef.current
     const tempData = {
       id: tempId, tile_id: originTileId, class_id: classId, class_name: className, ...n,
       secondary_class_id: null,
+      display_num,
       created_at: nowIso, created_by: labeler || null,
       updated_at: nowIso, updated_by: labeler || null,
       deleted: false,
@@ -782,7 +807,7 @@ function LabelPage({ classes, labeler, setError }) {
                 <div key={a.id} onClick={() => setSelAnn(a.id)}
                   className={`text-xs px-2.5 py-1.5 rounded-md flex items-center justify-between gap-2 cursor-pointer transition-colors ${selAnn === a.id ? "bg-zinc-100 ring-1 ring-zinc-300" : "hover:bg-zinc-50"}`}>
                   <div className="flex items-center gap-2 min-w-0 flex-1">
-                    <span className="font-mono text-[10px] text-zinc-500 shrink-0 w-5 text-right">#{idx + 1}</span>
+                    <span className="font-mono text-[10px] text-zinc-500 shrink-0 min-w-[1.25rem] text-right">#{a.display_num ?? (idx + 1)}</span>
                     <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: colorFor(a.class_id) }} />
                     <div className="min-w-0 flex-1">
                       <div className="truncate leading-tight">
@@ -886,15 +911,17 @@ function LabelPage({ classes, labeler, setError }) {
                   const hovered = hoverId === a.id
                   const active = interaction && interaction.id === a.id
                   const HS = 5
+                  // display_num is persisted per annotation so numbers don't shift on delete.
+                  // Falls back to idx+1 only during the brief migration window on first load.
+                  const num = a.display_num ?? (idx + 1)
                   // When a secondary (unsure) class is set, show both in the label: "primary / ?secondary"
-                  // #N matches the sidebar/comments numbering so commenters can reference boxes.
                   const baseText = a.secondary_class_id
                     ? `${a.class_name} / ?${a.secondary_class_name || `class_${a.secondary_class_id}`}`
                     : a.class_name
                   // Default: show only #N to keep the canvas uncluttered. Show the full
                   // species name only when the box is hovered, selected, or being dragged.
                   const showFullLabel = sel || hovered || active
-                  const labelText = showFullLabel ? `#${idx + 1} ${baseText}` : `#${idx + 1}`
+                  const labelText = showFullLabel ? `#${num} ${baseText}` : `#${num}`
                   const tagY = r.y > 20 ? r.y - 20 : r.y + 2
                   return (
                     <g key={a.id}>
