@@ -460,8 +460,8 @@ function LabelPage({ classes, labeler, setError }) {
       if (e.key.toLowerCase() === "d") setDraw(d => !d)
       if (e.key === "ArrowRight") setTileIdx(i => Math.min(i + 1, Math.max(0, tiles.length - 1)))
       if (e.key === "ArrowLeft") setTileIdx(i => Math.max(i - 1, 0))
-      if (e.key === "+" || e.key === "=") { e.preventDefault(); setZoom(z => clamp(z + 0.1, 0.8, 1)) }
-      if (e.key === "-" || e.key === "_") { e.preventDefault(); setZoom(z => clamp(z - 0.1, 0.8, 1)) }
+      if (e.key === "+" || e.key === "=") { e.preventDefault(); setZoom(z => clamp(z + 0.1, 0.5, 1.5)) }
+      if (e.key === "-" || e.key === "_") { e.preventDefault(); setZoom(z => clamp(z - 0.1, 0.5, 1.5)) }
       if (e.key === "0") { e.preventDefault(); setZoom(1) }
       if (!draw && selAnn && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); delAnn(selAnn) }
       // 1-4 → switch active class to classes[0..3]. Ignored if modifier keys are held
@@ -757,9 +757,9 @@ function LabelPage({ classes, labeler, setError }) {
             {draw ? "Drawing..." : "Draw Box"}
           </button>
           <div className="flex gap-1">
-            <button className="flex-1 border border-zinc-200 rounded-md px-2 py-1.5 text-xs hover:bg-zinc-50" onClick={() => setZoom(z => clamp(z - 0.1, 0.8, 1))}>-</button>
+            <button className="flex-1 border border-zinc-200 rounded-md px-2 py-1.5 text-xs hover:bg-zinc-50" onClick={() => setZoom(z => clamp(z - 0.1, 0.5, 1.5))}>-</button>
             <button className="flex-1 border border-zinc-200 rounded-md px-2 py-1.5 text-xs hover:bg-zinc-50" onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button>
-            <button className="flex-1 border border-zinc-200 rounded-md px-2 py-1.5 text-xs hover:bg-zinc-50" onClick={() => setZoom(z => clamp(z + 0.1, 0.8, 1))}>+</button>
+            <button className="flex-1 border border-zinc-200 rounded-md px-2 py-1.5 text-xs hover:bg-zinc-50" onClick={() => setZoom(z => clamp(z + 0.1, 0.5, 1.5))}>+</button>
           </div>
           <div className="flex gap-1">
             <button className="flex-1 border border-zinc-200 rounded-md px-2 py-1.5 text-xs hover:bg-zinc-50" onClick={() => setTileIdx(i => Math.max(i - 1, 0))}>&larr; Prev</button>
@@ -857,7 +857,12 @@ function LabelPage({ classes, labeler, setError }) {
           {!tile && <p className="text-zinc-500 text-sm">No tiles to label</p>}
           {tile && (
             <div ref={ref}
-              className={`relative select-none ${draw ? "cursor-crosshair" : "cursor-default"}`}
+              // shrink-0 is critical: without it, flex squashes this container horizontally
+              // below its declared width, so the image (object-contain) letterboxes but
+              // the SVG overlay (preserveAspectRatio=none) stretches to fill. Boxes then
+              // render tens of pixels off from where the user sees them. Keep declared
+              // tile-aspect size; parent's overflow-auto handles scrolling if it doesn't fit.
+              className={`relative select-none shrink-0 ${draw ? "cursor-crosshair" : "cursor-default"}`}
               style={{ width: `${sw}px`, height: `${sh}px` }}
               onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}>
               <img src={tile.storage_url} alt={tile.file_name}
