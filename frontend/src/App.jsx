@@ -168,7 +168,8 @@ function GatePage({ onSuccess }) {
           <p className="text-sm text-zinc-500 mt-1">Enter your name and the keyword to start labeling</p>
         </div>
         <div className="space-y-3">
-          <input type="text" value={labeler} onChange={e => setLabelerLocal(e.target.value)}
+          <input type="text" value={labeler}
+            onChange={e => { setLabelerLocal(e.target.value); setLabeler(e.target.value) }}
             onKeyDown={e => e.key === "Enter" && submit()}
             onFocus={e => e.target.select()}
             placeholder="Your name" autoFocus
