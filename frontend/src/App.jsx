@@ -300,6 +300,9 @@ function LabelPage({ classes, labeler, setError }) {
   const [tiles, setTiles] = useState([])
   const [tileIdx, setTileIdx] = useState(0)
   const [anns, setAnns] = useState([])
+  const [comments, setComments] = useState([])
+  const [commentDraft, setCommentDraft] = useState("")
+  const [postingComment, setPostingComment] = useState(false)
   const [classId, setClassId] = useState(classes[0]?.id || null)
   const [selAnn, setSelAnn] = useState(null)
   const [draw, setDraw] = useState(false)
@@ -378,6 +381,40 @@ function LabelPage({ classes, labeler, setError }) {
     setAnns(rows)
   }
 
+  async function loadComments(tid) {
+    if (!tid) { setComments([]); return }
+    let rows = await fsGetAll("comments", where("tile_id", "==", tid))
+    rows.sort((a, b) => a.id - b.id)
+    setComments(rows)
+  }
+
+  async function submitComment() {
+    const text = commentDraft.trim()
+    if (!text || !tile || postingComment) return
+    setPostingComment(true)
+    const originTileId = tile.id
+    try {
+      const cid = await nextId("comments")
+      const data = {
+        id: cid,
+        tile_id: originTileId,
+        author: labeler || "anonymous",
+        text,
+        created_at: new Date().toISOString(),
+      }
+      await setDoc(doc(db, "comments", String(cid)), data)
+      // Only append to UI state if we're still on the same tile
+      if (tile?.id === originTileId) {
+        setComments(prev => [...prev, data])
+      }
+      setCommentDraft("")
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setPostingComment(false)
+    }
+  }
+
   // Preload adjacent tiles when tile index changes
   useEffect(() => {
     for (let offset = 1; offset <= 3; offset++) {
@@ -393,11 +430,17 @@ function LabelPage({ classes, labeler, setError }) {
     // Reset pending state on tile change — pending writes for old tile will still complete in Firestore
     // but won't corrupt current tile's annotation array
     pendingTileRef.current = tile?.id || null
-    if (tile) loadAnns(tile.id).catch(e => setError(e.message))
-    else setAnns([])
+    if (tile) {
+      loadAnns(tile.id).catch(e => setError(e.message))
+      loadComments(tile.id).catch(e => setError(e.message))
+    } else {
+      setAnns([])
+      setComments([])
+    }
     setSelAnn(null)
     setEditing(null)
     setInteraction(null)
+    setCommentDraft("")
   }, [tile?.id])
   useEffect(() => { if (!classId && classes.length) setClassId(classes[0].id) }, [classes])
 
@@ -702,17 +745,21 @@ function LabelPage({ classes, labeler, setError }) {
           <div>
             <label className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2 block">Annotations ({anns.length})</label>
             <div className="space-y-1 max-h-64 overflow-y-auto">
-              {anns.map(a => (
+              {anns.map((a, idx) => (
                 <div key={a.id} onClick={() => setSelAnn(a.id)}
-                  className={`text-xs px-3 py-2 rounded-md flex items-center justify-between cursor-pointer transition-colors ${selAnn === a.id ? "bg-zinc-100 ring-1 ring-zinc-300" : "hover:bg-zinc-50"}`}>
-                  <span className="flex items-center gap-2 min-w-0">
+                  className={`text-xs px-2.5 py-1.5 rounded-md flex items-center justify-between gap-2 cursor-pointer transition-colors ${selAnn === a.id ? "bg-zinc-100 ring-1 ring-zinc-300" : "hover:bg-zinc-50"}`}>
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <span className="font-mono text-[10px] text-zinc-500 shrink-0 w-5 text-right">#{idx + 1}</span>
                     <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: colorFor(a.class_id) }} />
-                    <span className="truncate">
-                      {a.class_name}
-                      {a.secondary_class_id && <span className="text-zinc-400"> / ?{a.secondary_class_name || `class_${a.secondary_class_id}`}</span>}
-                    </span>
-                  </span>
-                  <button onClick={e => { e.stopPropagation(); delAnn(a.id) }} className="text-zinc-400 hover:text-red-600 transition-colors">&times;</button>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate leading-tight">
+                        {a.class_name}
+                        {a.secondary_class_id && <span className="text-zinc-400"> / ?{a.secondary_class_name || `class_${a.secondary_class_id}`}</span>}
+                      </div>
+                      {a.created_by && <div className="text-[10px] text-zinc-400 truncate leading-tight">{a.created_by}</div>}
+                    </div>
+                  </div>
+                  <button onClick={e => { e.stopPropagation(); delAnn(a.id) }} className="text-zinc-400 hover:text-red-600 transition-colors shrink-0">&times;</button>
                 </div>
               ))}
               {anns.length === 0 && <p className="text-xs text-zinc-400 py-2">No annotations on this tile</p>}
@@ -752,6 +799,35 @@ function LabelPage({ classes, labeler, setError }) {
               </div>
             )
           })()}
+
+          <div className="pt-2 mt-auto border-t border-zinc-100">
+            <label className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2 block">Comments ({comments.length})</label>
+            <div className="space-y-2 max-h-48 overflow-y-auto bg-zinc-50 border border-zinc-200 rounded-md p-2 mb-2">
+              {comments.length === 0 && <p className="text-[11px] text-zinc-400">No comments on this tile yet. Use #1, #2... to reference boxes.</p>}
+              {comments.map(c => (
+                <div key={c.id} className="text-[11px] leading-snug">
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="font-medium text-zinc-700 truncate">{c.author}</span>
+                    <span className="text-zinc-400 text-[10px] shrink-0">{new Date(c.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                  </div>
+                  <p className="text-zinc-600 whitespace-pre-wrap break-words">{c.text}</p>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-1">
+              <input type="text" value={commentDraft}
+                onChange={e => setCommentDraft(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitComment() } }}
+                placeholder="Add comment... (ref #1, #2)"
+                maxLength={500}
+                className="flex-1 border border-zinc-200 rounded-md px-2 py-1.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-teal-600" />
+              <button onClick={submitComment}
+                disabled={!commentDraft.trim() || postingComment || !tile}
+                className="px-3 py-1.5 rounded-md bg-teal-700 text-white text-xs font-medium hover:bg-teal-600 transition-colors disabled:opacity-40">
+                {postingComment ? "…" : "Post"}
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="flex-1 bg-zinc-900 flex items-center justify-center overflow-auto p-3">
@@ -764,15 +840,17 @@ function LabelPage({ classes, labeler, setError }) {
               <img src={tile.storage_url} alt={tile.file_name}
                 className="absolute inset-0 h-full w-full object-contain" draggable={false} />
               <svg className="absolute inset-0 h-full w-full" viewBox={`0 0 ${tileW} ${tileH}`} preserveAspectRatio="none" style={{ pointerEvents: "none" }}>
-                {displayed.map(a => {
+                {displayed.map((a, idx) => {
                   const r = fromNorm(a, tileW, tileH)
                   const c = colorFor(a.class_id)
                   const sel = selAnn === a.id
                   const HS = 5
                   // When a secondary (unsure) class is set, show both in the label: "primary / ?secondary"
-                  const labelText = a.secondary_class_id
+                  // #N matches the sidebar/comments numbering so commenters can reference boxes.
+                  const baseText = a.secondary_class_id
                     ? `${a.class_name} / ?${a.secondary_class_name || `class_${a.secondary_class_id}`}`
                     : a.class_name
+                  const labelText = `#${idx + 1} ${baseText}`
                   const tagY = r.y > 20 ? r.y - 20 : r.y + 2
                   return (
                     <g key={a.id}>

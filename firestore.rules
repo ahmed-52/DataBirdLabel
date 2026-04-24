@@ -30,6 +30,10 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    match /comments/{doc} {
+      allow read, write: if true;
+    }
+
     match /sessions/{doc} {
       allow read, write: if true;
     }
