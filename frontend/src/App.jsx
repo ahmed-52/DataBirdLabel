@@ -184,7 +184,7 @@ function GatePage({ onSuccess }) {
           <input type="password" value={keyword} onChange={e => setKeyword(e.target.value)}
             onKeyDown={e => e.key === "Enter" && submit()} placeholder="Keyword" autoFocus
             className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-teal-600/50 focus:border-teal-600 placeholder:text-zinc-600" />
-          <button onClick={submit} disabled={checking || !usersLoaded}
+          <button onClick={submit} disabled={checking || !usersLoaded || users.length === 0}
             className="w-full py-3 rounded-lg bg-teal-700 text-white text-sm font-medium hover:bg-teal-600 transition-colors disabled:opacity-50">
             {checking ? "Checking..." : "Enter"}
           </button>
